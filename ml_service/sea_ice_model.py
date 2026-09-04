@@ -26,8 +26,68 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR      = Path(__file__).resolve().parent
 MODEL_PATH    = BASE_DIR / "models"    / "seasonal_cnn.keras"
+TFLITE_PATH   = BASE_DIR / "models"    / "seasonal_cnn.tflite"
 ARTIFACT_DIR  = BASE_DIR / "artifacts"
 CONFIG_PATH   = ARTIFACT_DIR / "model_config.json"
+
+# ---------------------------------------------------------------------------
+# TFLite model wrapper with .predict() interface
+# ---------------------------------------------------------------------------
+
+class TFLiteModelWrapper:
+    """Provides a Keras-compatible .predict() interface around a TFLite Interpreter."""
+
+    def __init__(self, interpreter):
+        self.interpreter = interpreter
+        self.interpreter.allocate_tensors()
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        self.input_index = self.input_details[0]["index"]
+        self.output_index = self.output_details[0]["index"]
+        self.input_shape = tuple(self.input_details[0]["shape"])
+        self.output_shape = tuple(self.output_details[0]["shape"])
+
+    def predict(self, model_input: np.ndarray, verbose: int = 0) -> np.ndarray:
+        self.interpreter.set_tensor(self.input_index, model_input.astype(np.float32))
+        self.interpreter.invoke()
+        return self.interpreter.get_tensor(self.output_index)
+
+
+def _load_tflite_model(model_path: Path):
+    """Load a TFLite model using tflite-runtime or tensorflow.lite."""
+    try:
+        import tflite_runtime.interpreter as tflite
+        logger.info("Using tflite-runtime for inference.")
+        interpreter = tflite.Interpreter(model_path=str(model_path))
+    except ImportError:
+        import tensorflow as tf
+        logger.info("Using tensorflow.lite for inference.")
+        interpreter = tf.lite.Interpreter(model_path=str(model_path))
+    return TFLiteModelWrapper(interpreter)
+
+
+def _load_keras_model_with_weights(model_path: Path):
+    """Reconstruct exact Functional architecture and load weights from seasonal_cnn.keras."""
+    import keras
+    from keras import layers
+
+    logger.info("Reconstructing SeasonalResidualSeaIceCNN architecture and loading weights...")
+    inputs = keras.Input(shape=(66, 57, 9), name="sea_ice_and_season")
+    x = layers.Conv2D(32, (3, 3), padding="same", activation="relu", name="conv2d")(inputs)
+    x = layers.Conv2D(32, (3, 3), padding="same", activation="relu", name="conv2d_1")(x)
+    x = layers.Dropout(0.1, name="dropout")(x)
+    x = layers.Conv2D(16, (3, 3), padding="same", activation="relu", name="conv2d_2")(x)
+    pred_change = layers.Conv2D(1, (3, 3), padding="same", activation="linear", name="predicted_ice_change")(x)
+
+    latest_ice = layers.Lambda(lambda z: z[:, :, :, 6], output_shape=(66, 57), name="latest_observed_ice")(inputs)
+    change_map = layers.Lambda(lambda z: keras.ops.squeeze(z, axis=-1), output_shape=(66, 57), name="ice_change_map")(pred_change)
+    res = layers.Add(name="residual_prediction")([latest_ice, change_map])
+    bounded = layers.Lambda(lambda z: keras.ops.clip(z, 0.0, 1.0), output_shape=(66, 57), name="bounded_ice_prediction")(res)
+
+    model = keras.Model(inputs=inputs, outputs=bounded, name="SeasonalResidualSeaIceCNN")
+    model.load_weights(str(model_path))
+    return model
+
 
 # ---------------------------------------------------------------------------
 # Lazy resource cache
@@ -37,26 +97,36 @@ _resources: dict | None = None   # populated on first call to _load_resources()
 
 
 def _load_resources() -> dict:
-    """Load the Keras model and NumPy artifacts exactly once."""
+    """Load the model and NumPy artifacts exactly once."""
     global _resources
     if _resources is not None:
         return _resources
 
-    import tensorflow as tf  # deferred import — keeps startup fast
+    model = None
 
-    logger.info("Loading Keras model from %s …", MODEL_PATH)
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"Model file not found: {MODEL_PATH}\n"
-            "Run the training notebook to generate seasonal_cnn.keras."
-        )
+    # Priority 1: Load lightweight TFLite deployment model (safe, no segfaults, low memory)
+    if TFLITE_PATH.exists():
+        try:
+            logger.info("Loading TFLite model from %s …", TFLITE_PATH)
+            model = _load_tflite_model(TFLITE_PATH)
+            logger.info("TFLite model loaded successfully. Output shape: %s", model.output_shape)
+        except Exception as exc:
+            logger.warning("Failed to load TFLite model (%s), will try Keras weights fallback: %s", TFLITE_PATH, exc)
 
-    model = tf.keras.models.load_model(
-    MODEL_PATH,
-    compile=False,
-    safe_mode=False
-)
-    logger.info("Model loaded.  Output shape: %s", model.output_shape)
+    # Priority 2: Fallback to Keras model weight-loading from seasonal_cnn.keras
+    if model is None:
+        if not MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"Model file not found at {TFLITE_PATH} or {MODEL_PATH}\n"
+                "Ensure seasonal_cnn.tflite or seasonal_cnn.keras is present."
+            )
+        try:
+            logger.info("Loading weights from %s into reconstructed architecture …", MODEL_PATH)
+            model = _load_keras_model_with_weights(MODEL_PATH)
+            logger.info("Keras weights loaded successfully. Output shape: %s", getattr(model, "output_shape", "(1, 66, 57)"))
+        except Exception as exc:
+            logger.error("Failed to load model weights: %s", exc)
+            raise
 
     def _load_npy(name: str) -> np.ndarray:
         path = ARTIFACT_DIR / name
@@ -88,8 +158,14 @@ def is_loaded() -> bool:
 
 
 def get_model_config() -> dict:
-    """Return the model config JSON (loads resources if needed)."""
+    """Return the model config JSON without requiring full model loading."""
+    if _resources is not None:
+        return _resources["model_config"]
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r") as f:
+            return json.load(f)
     return _load_resources()["model_config"]
+
 
 
 # ---------------------------------------------------------------------------

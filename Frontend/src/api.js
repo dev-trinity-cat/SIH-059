@@ -1,5 +1,5 @@
 /** Same-origin `/api` in production; Vite proxies `/api` in development. */
-const BASE = import.meta.env.VITE_API_URL || "";
+const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 
 async function json(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {

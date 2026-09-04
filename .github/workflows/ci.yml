@@ -1,0 +1,114 @@
+name: CI - Build and Test Validation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-ml-service:
+    name: Test ML Service (Python 3.11 & Real CNN Inference)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "ml_service/requirements.txt"
+
+      - name: Install ML dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ml_service/requirements.txt
+
+      - name: Verify Model Loading and Real CNN Inference
+        run: |
+          python -u -c "
+          import sys
+          sys.path.insert(0, 'ml_service')
+          import sea_ice_model as sm
+          import numpy as np
+
+          print('Checking model config...')
+          cfg = sm.get_model_config()
+          assert cfg['model_name'] == 'SeasonalResidualSeaIceCNN', f'Unexpected model name: {cfg}'
+
+          print('Running real inference with dummy 7-day input...')
+          dummy = np.ones((7, 66, 57), dtype=np.float32) * 0.5
+          res = sm.predict_sea_ice(dummy, '2024-06-01')
+          assert res['success'] is True, 'Prediction failed'
+          assert len(res['prediction']) == 66 and len(res['prediction'][0]) == 57, 'Invalid prediction shape'
+          assert res['stats']['valid_cells'] == 2108, f'Invalid cell count: {res[\"stats\"][\"valid_cells\"]}'
+          print('Real ML inference verified successfully! Output shape: 66x57')
+          "
+
+      - name: Test Flask API Endpoints
+        run: |
+          python -u -c "
+          import sys
+          sys.path.insert(0, 'ml_service')
+          from app import app
+          client = app.test_client()
+
+          # 1. Health
+          r = client.get('/health')
+          assert r.status_code == 200, f'/health returned {r.status_code}'
+
+          # 2. Model info
+          r = client.get('/model-info')
+          assert r.status_code == 200 and r.get_json()['success'] is True
+
+          # 3. Grid info
+          r = client.get('/grid-info')
+          assert r.status_code == 200 and r.get_json()['success'] is True
+
+          # 4. Available dates
+          r = client.get('/available-dates')
+          assert r.status_code == 200 and r.get_json()['success'] is True
+
+          # 5. Predict (target_date only)
+          r = client.post('/predict', json={'target_date': '2024-06-01'})
+          assert r.status_code == 200 and r.get_json()['success'] is True
+
+          # 6. Predict (with last_7_days)
+          import numpy as np
+          d7 = np.ones((7, 66, 57), dtype=np.float32) * 0.4
+          r = client.post('/predict', json={'target_date': '2024-07-01', 'last_7_days': d7.tolist()})
+          assert r.status_code == 200 and r.get_json()['success'] is True
+          print('All Flask endpoints verified successfully!')
+          "
+
+  test-frontend-and-backend:
+    name: Test Frontend Build & Backend Syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "Frontend/package-lock.json"
+
+      - name: Install Frontend dependencies & Build
+        run: |
+          cd Frontend
+          npm ci
+          npm run build
+
+      - name: Install Backend dependencies & Check Syntax
+        run: |
+          cd backend
+          npm install
+          node -c server.js
+          echo "Backend syntax OK"

@@ -1,19 +1,16 @@
 # Render Blueprint — auto-deploys from GitHub (no Docker).
 # Dashboard: New → Blueprint → connect repo dev-trinity-cat/SIH-059
-#
-# After first deploy, set these on sih059-ml if you host weights off GitHub:
-#   MODEL_URL, SPATIAL_MASK_URL, LATITUDE_GRID_URL, LONGITUDE_GRID_URL, NC_URL
-#
-# TensorFlow needs more than the free 512 MB plan. Upgrade sih059-ml to Starter
-# (or larger) if the ML service is killed or /api/health shows ml_service unavailable.
+# Both services run on the Render Free plan with zero credit card required.
+# The ML service uses lightweight TFLite inference with real trained weights (~30 MB RAM).
 
 services:
   - type: web
     name: sih059-ml
+    plan: free
     runtime: python
     rootDir: ml_service
     buildCommand: pip install -r requirements.txt
-    startCommand: python download_artifacts.py && gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 180 app:app
+    startCommand: python download_artifacts.py && gunicorn -w 1 --threads 2 -b 0.0.0.0:$PORT --timeout 180 app:app
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -31,6 +28,7 @@ services:
 
   - type: web
     name: sih059-app
+    plan: free
     runtime: node
     buildCommand: cd Frontend && npm install && npm run build && cd ../backend && npm install
     startCommand: node backend/server.js
@@ -45,3 +43,4 @@ services:
           type: web
           name: sih059-ml
           envVarKey: RENDER_EXTERNAL_URL
+

@@ -5,13 +5,15 @@
 flask==3.1.1
 flask-cors==5.0.1
 
-# Production WSGI server (single worker — TF not thread-safe)
+# Production WSGI server
 gunicorn==23.0.0
 
-# ML / numeric
+# ML / numeric — lightweight tflite-runtime on Linux (Render Free), full TF elsewhere
 numpy>=1.24,<2.0
-tensorflow==2.17.1
+tflite-runtime>=2.14.0; sys_platform == "linux"
+tensorflow>=2.15,<2.18; sys_platform != "linux"
 
 # Data loading (NetCDF)
 xarray>=2024.1
 netCDF4>=1.6
+
