@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { SeaIceProvider, useSeaIce } from "./SeaIceContext";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -296,6 +297,22 @@ function Badge({ children, tone = "neutral" }) {
   );
 }
 
+function SystemStatusLabel() {
+  const { status } = useSeaIce();
+  const label = status === "live" ? "Live" : status === "connecting" ? "Connecting" : "Demo";
+  return (
+    <span style={{ fontSize: 11.5, color: COLORS.navySoft }}>
+      System <b style={{ color: COLORS.navy }}>{label}</b>
+    </span>
+  );
+}
+
+function ApiSyncLabel() {
+  const { status } = useSeaIce();
+  const label = status === "live" ? "API live" : status === "connecting" ? "Connecting" : "Demo data";
+  return <>{label}</>;
+}
+
 function Card({ children, style, title, action, padding = 16 }) {
   return (
     <div
@@ -437,9 +454,7 @@ function Sidebar({ active, onNavigate, collapsed, onToggleCollapse, mobileOpen, 
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
               <span style={{ width: 7, height: 7, borderRadius: 99, background: COLORS.good, flexShrink: 0 }} />
-              <span style={{ fontSize: 11.5, color: COLORS.navySoft }}>
-                System <b style={{ color: COLORS.navy }}>{MOCK.system.status}</b>
-              </span>
+              <SystemStatusLabel />
             </div>
             <div style={{ fontSize: 11, color: COLORS.navySoft, marginBottom: 12 }}>
               Data updated {MOCK.system.lastUpdated}
@@ -538,7 +553,7 @@ function Header({ title, subtitle, onMenuClick }) {
           }}
         >
           <Radio size={13} color={COLORS.good} />
-          Synced
+          <ApiSyncLabel />
         </div>
         <div
           style={{
@@ -770,7 +785,8 @@ function RouteLegend({ layers }) {
 }
 
 function AntarcticMap({ layers, onToggleLayer, selectedIcebergId, onSelectIceberg, height = 480, showLegend = true }) {
-  const grid = MOCK.seaIceGrid;
+  const { displayGrid } = useSeaIce();
+  const grid = displayGrid?.length ? displayGrid : MOCK.seaIceGrid;
   const rows = grid.length, cols = grid[0].length;
   const cellW = 100 / cols, cellH = 100 / rows;
 
@@ -1234,11 +1250,53 @@ function OverviewPage() {
    ============================================================ */
 
 function IceForecastPage() {
-  const data = MOCK.seaIceForecast;
+  const { series, forecast, status, error, loading, targetDate, setTargetDate, dateRange, refresh } = useSeaIce();
+  const data = series;
+  const meanPct = forecast?.stats?.mean_concentration != null
+    ? `${Math.round(forecast.stats.mean_concentration * 100)}%`
+    : "64%";
+  const coverage = forecast?.stats?.ice_coverage_fraction != null
+    ? `${Math.round(forecast.stats.ice_coverage_fraction * 100)}%`
+    : "—";
+  const badge = status === "live" ? "CNN live" : loading ? "Loading" : "Demo";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="ani-main-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 300px", gap: 14, alignItems: "start" }}>
-        <Card title="Sea-Ice Concentration Forecast" action={<Badge tone="sea">72-hour model</Badge>}>
+        <Card
+          title="Sea-Ice Concentration Forecast"
+          action={<Badge tone={status === "live" ? "sea" : "warn"}>{badge}</Badge>}
+        >
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12, color: COLORS.navySoft }}>
+              Target date{" "}
+              <input
+                type="date"
+                value={targetDate || ""}
+                min={dateRange.start || undefined}
+                max={dateRange.end || undefined}
+                onChange={(e) => setTargetDate(e.target.value)}
+                style={{
+                  marginLeft: 6, padding: "4px 8px", borderRadius: 5,
+                  border: `1px solid ${COLORS.border}`, fontSize: 12, color: COLORS.navy,
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading}
+              style={{
+                padding: "4px 10px", borderRadius: 5, border: `1px solid ${COLORS.border}`,
+                background: COLORS.card, color: COLORS.sea, fontSize: 12, cursor: "pointer", fontWeight: 600,
+              }}
+            >
+              {loading ? "Running…" : "Run forecast"}
+            </button>
+          </div>
+          {error && (
+            <p style={{ fontSize: 12, color: COLORS.warn, margin: "0 0 8px" }}>{error}</p>
+          )}
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={data} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
               <defs>
@@ -1257,16 +1315,20 @@ function IceForecastPage() {
         </Card>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Card title="Forecast Summary">
-            <StatLine label="Current Concentration" value="64%" />
-            <StatLine label="Forecast (+24h)" value="54%" />
-            <StatLine label="Trend" value="Decreasing" icon={TrendingDown} tone={COLORS.good} />
-            <StatLine label="Confidence" value="88%" />
+            <StatLine label="Mean concentration" value={meanPct} />
+            <StatLine label="Ice coverage" value={coverage} />
+            <StatLine label="Inference" value={forecast?.inference_time_seconds != null ? `${forecast.inference_time_seconds}s` : "—"} />
+            <StatLine
+              label="Source"
+              value={status === "live" ? "Seasonal CNN" : "Mock"}
+              tone={status === "live" ? COLORS.good : COLORS.warn}
+            />
           </Card>
           <Card style={{ background: COLORS.bgAlt }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy, marginBottom: 6 }}>72-Hour Trend</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.navy, marginBottom: 6 }}>Model note</div>
             <p style={{ fontSize: 12.5, color: COLORS.navySoft, lineHeight: 1.5, margin: 0 }}>
-              Moderate decrease in sea-ice concentration expected over the next 24 hours, with a gradual
-              rebound toward the 72-hour mark as regional temperatures stabilize.
+              The deployed CNN forecasts one day of sea-ice concentration on the Bharati 66×57 grid
+              from the previous 7 days of AMSR2 data. Iceberg tracks and vessel routes still use demo layers.
             </p>
           </Card>
         </div>
@@ -1524,7 +1586,7 @@ function AnalyticsPage() {
 
 const PAGE_META = {
   overview: { component: OverviewPage, title: "Antarctic Navigation Intelligence", subtitle: "AI Decision Support System · Bharati Station Operations" },
-  iceForecast: { component: IceForecastPage, title: "Ice Forecast", subtitle: "72-hour sea-ice concentration modeling" },
+  iceForecast: { component: IceForecastPage, title: "Ice Forecast", subtitle: "1-day sea-ice concentration CNN · Bharati grid" },
   icebergs: { component: IcebergsPage, title: "Icebergs", subtitle: "Tracked iceberg positions and drift prediction" },
   riskMap: { component: RiskMapPage, title: "Risk Map", subtitle: "Combined environmental hazard assessment" },
   routePlanner: { component: RoutePlannerPage, title: "Route Planner", subtitle: "AI-assisted route generation and comparison" },
@@ -1532,6 +1594,14 @@ const PAGE_META = {
 };
 
 export default function Dashboard() {
+  return (
+    <SeaIceProvider fallbackGrid={MOCK.seaIceGrid} fallbackSeries={MOCK.seaIceForecast}>
+      <DashboardShell />
+    </SeaIceProvider>
+  );
+}
+
+function DashboardShell() {
   const [active, setActive] = useState("overview");
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);

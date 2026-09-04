@@ -16,6 +16,8 @@
  * NODE_ENV        "development" | "production"
  */
 
+import path from "path";
+import { fileURLToPath } from "url";
 import express from "express";
 import cors from "cors";
 import axios from "axios";
@@ -27,9 +29,12 @@ dotenv.config();
 // Config
 // ---------------------------------------------------------------------------
 
+const __dirname      = path.dirname(fileURLToPath(import.meta.url));
 const PORT           = parseInt(process.env.PORT          || "5000", 10);
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL          || "http://localhost:8000";
 const NODE_ENV       = process.env.NODE_ENV                || "development";
+const FRONTEND_DIST  = process.env.FRONTEND_DIST
+  || path.join(__dirname, "..", "Frontend", "dist");
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -40,10 +45,10 @@ const app = express();
 app.use(express.json({ limit: "50mb" }));  // large body — 7×66×57 float array
 app.use(express.urlencoded({ extended: true }));
 
-// CORS — allow Vite dev server (port 5173) and same-origin in production
+// CORS — Vite dev server locally; same-origin (or FRONTEND_URL) in production
 const corsOrigins =
   NODE_ENV === "production"
-    ? (process.env.FRONTEND_URL || false)
+    ? (process.env.FRONTEND_URL || true)
     : ["http://localhost:5173", "http://127.0.0.1:5173"];
 
 app.use(cors({ origin: corsOrigins, credentials: true }));
@@ -250,12 +255,26 @@ app.get("/api/available-dates", async (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Fallthrough
+// Fallthrough — API 404, then the Vite production build
 // ---------------------------------------------------------------------------
 
-app.use((_req, res) => {
+app.use("/api", (_req, res) => {
   res.status(404).json({ success: false, error: "Endpoint not found." });
 });
+
+if (NODE_ENV === "production") {
+  app.use(express.static(FRONTEND_DIST));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(FRONTEND_DIST, "index.html"), (err) => {
+      if (err) next(err);
+    });
+  });
+} else {
+  app.use((_req, res) => {
+    res.status(404).json({ success: false, error: "Endpoint not found." });
+  });
+}
 
 app.use((err, _req, res, _next) => {
   console.error("[Express error]", err);
@@ -266,7 +285,7 @@ app.use((err, _req, res, _next) => {
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║     Antarctic Navigation AI — Express Backend        ║

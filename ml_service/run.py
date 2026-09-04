@@ -29,7 +29,7 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    port  = int(os.environ.get("FLASK_PORT",  8000))
+    port  = int(os.environ.get("PORT") or os.environ.get("FLASK_PORT", 8000))
     host  = os.environ.get("FLASK_HOST",  "0.0.0.0")
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
 
