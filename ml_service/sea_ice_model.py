@@ -51,7 +51,11 @@ def _load_resources() -> dict:
             "Run the training notebook to generate seasonal_cnn.keras."
         )
 
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    model = tf.keras.models.load_model(
+    MODEL_PATH,
+    compile=False,
+    safe_mode=False
+)
     logger.info("Model loaded.  Output shape: %s", model.output_shape)
 
     def _load_npy(name: str) -> np.ndarray:

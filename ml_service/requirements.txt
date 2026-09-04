@@ -10,7 +10,7 @@ gunicorn==23.0.0
 
 # ML / numeric
 numpy>=1.24,<2.0
-tensorflow>=2.15,<2.18
+tensorflow==2.17.1
 
 # Data loading (NetCDF)
 xarray>=2024.1
