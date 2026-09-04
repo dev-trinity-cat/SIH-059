@@ -1615,7 +1615,23 @@ function DashboardShell() {
   };
 
   return (
-    <div style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", height: "100vh", width: "100%", display: "flex", background: COLORS.bg, color: COLORS.navy, overflow: "hidden" }}>
+    <div
+      className="ani-app-root"
+      style={{
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        width: "100%",
+        minWidth: "100%",
+        height: "100vh",
+        minHeight: "100vh",
+        maxWidth: "none",
+        margin: 0,
+        padding: 0,
+        display: "flex",
+        background: COLORS.bg,
+        color: COLORS.navy,
+        overflow: "hidden",
+      }}
+    >
       <style>{`
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
